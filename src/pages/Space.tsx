@@ -10,6 +10,8 @@ import { ConnectPing } from "@/components/ConnectPing";
 import { useMeeting } from "@/context/MeetingContext";
 import { LocationIndicator } from "@/components/LocationIndicator";
 import { useGeolocation } from "@/hooks/useGeolocation";
+import { usePresenceUpdates } from "@/hooks/usePresenceUpdates";
+import { useNearbyMatches } from "@/hooks/useNearbyMatches";
 import { findNearestVenue } from "@/lib/location-utils";
 import { getPlaceNameFromCoords } from "@/lib/geocoding-utils";
 import { DURHAM_RECS } from "@/config/city";
@@ -76,14 +78,42 @@ const Space = () => {
   const [currentVenue, setCurrentVenue] = useState({ name: "Peak Coffee Lab", emoji: "🌿" });
   
   const { currentMeeting, startMeeting, endMeeting, addOrUpdateConnection } = useMeeting();
+  
+  // Location tracking (always enabled, not tied to Connect status)
   const { location, status, toggleTracking, isMockLocation } = useGeolocation({
-    enabled: connectEnabled,
+    enabled: true, // Always track when user has granted permission
     highAccuracy: !!currentMeeting,
   });
+  
+  // Presence updates (throttled publishing)
+  usePresenceUpdates({
+    enabled: true, // Always publish when location available
+    location,
+  });
+  
+  // Nearby matching (only when Connect is enabled)
+  const { nearbyUsers, loading: matchingLoading } = useNearbyMatches({
+    location,
+    enabled: connectEnabled,
+  });
+  
   const { toast } = useToast();
   
-  // Limit visible users to 5-8 for calm focus
-  const visibleUsers = mockUsers.slice(0, 6);
+  // Convert nearbyUsers to display format
+  const visibleUsers = nearbyUsers.map((user, index) => ({
+    id: user.id,
+    name: user.name,
+    avatar: user.emoji_signature || "👤",
+    headline: `${user.sharedInterests.join(', ')} • ${Math.round(user.distance)}m away`,
+    lastSeen: "Now",
+    activities: user.interests,
+    score: 100 - index * 5, // Mock score based on order
+    weeklyVisits: [1, 2, 1, 2, 3, 2, 1], // Mock data
+    bio: `Shares interests: ${user.sharedInterests.join(', ')}`,
+    typicalTimes: "Various times",
+    emojiSignature: user.emoji_signature || "👤",
+  }));
+
 
   const handleConnect = (userName: string) => {
     setConnectTargetUser(userName);
@@ -114,7 +144,7 @@ const Space = () => {
   };
 
   const handleStartTalkingDirect = (data: { sharedEmojiCode: string; venueName: string; landmark: string }) => {
-    const selectedUser = mockUsers.find(u => u.name === connectTargetUser);
+    const selectedUser = visibleUsers.find(u => u.name === connectTargetUser);
     
     // Convert user activities to interests (lowercase)
     const userInterests = selectedUser?.activities.map(a => a.toLowerCase()) || ["coffee"];
@@ -290,14 +320,17 @@ const Space = () => {
         {/* People Grid - Limited to 6 */}
         <div className="space-y-4">
           <div className="flex items-center justify-between px-1">
-            <div className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-muted-foreground" />
-              <h2 className="font-semibold text-foreground">Nearby</h2>
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-muted-foreground" />
+                <h2 className="font-semibold text-foreground">Nearby</h2>
+              </div>
+              <span className="text-xs text-muted-foreground px-3 py-1 rounded-full bg-muted/50">
+                {connectEnabled 
+                  ? `${visibleUsers.length} ${visibleUsers.length === 1 ? 'person' : 'people'}`
+                  : 'Connect off'
+                }
+              </span>
             </div>
-            <span className="text-xs text-muted-foreground px-3 py-1 rounded-full bg-muted/50">
-              {visibleUsers.length} people
-            </span>
-          </div>
 
           {!connectEnabled ? (
             <div className="gradient-card rounded-3xl p-10 text-center shadow-soft">
@@ -314,6 +347,19 @@ const Space = () => {
               >
                 Enable Connect
               </button>
+            </div>
+          ) : visibleUsers.length === 0 ? (
+            <div className="gradient-card rounded-3xl p-10 text-center shadow-soft">
+              <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-primary/5 flex items-center justify-center">
+                <MapPin className="w-10 h-10 text-primary/40" />
+              </div>
+              <h3 className="font-semibold mb-2 text-foreground">No one nearby yet</h3>
+              <p className="text-sm text-muted-foreground max-w-xs mx-auto">
+                {matchingLoading 
+                  ? "Searching for people nearby..."
+                  : "Be the first! Others within 15m who share your interests will appear here."
+                }
+              </p>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-3">
